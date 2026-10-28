@@ -1,0 +1,107 @@
+# ==============================================================================
+# Practical 11: Multi-Container Orchestration with Docker Compose
+# Stack: React 19 Frontend + Node/Express Backend + MongoDB 7.0 Database
+# Course: ITUE301 - Advanced Web Development Frameworks
+# Student: Vishvam Patel (24IT110) | CHARUSAT - CSPIT / DEPSTAR
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # Service 1: Database - MongoDB 7.0 Container
+  # ----------------------------------------------------------------------------
+  mongo:
+    image: mongo:7.0-jammy
+    container_name: awdf-mongodb
+    restart: unless-stopped
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-taskmanager}
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - awdf-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ----------------------------------------------------------------------------
+  # Service 2: Backend - Express.js REST API Container (P7 + P9 + P10 + P11)
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: awdf-backend:1.0.0
+    container_name: awdf-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-5001}:5001"
+    environment:
+      NODE_ENV: production
+      PORT: 5001
+      MONGO_URI: mongodb://mongo:27017/taskmanager
+      JWT_SECRET: ${JWT_SECRET:-charusat_itue301_practical11_jwt_secret_key_prod}
+      JWT_EXPIRES_IN: 24h
+      CACHE_TTL_DEFAULT: 60
+      DOCKER_CONTAINER: "true"
+      CONTAINER_SERVICE: "backend-express"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - awdf-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # Service 3: Frontend - Nginx Reverse Proxy & React SPA Container
+  # ----------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: awdf-frontend:1.0.0
+    container_name: awdf-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5174}:80"
+    environment:
+      DOCKER_CONTAINER: "true"
+      CONTAINER_SERVICE: "frontend-nginx"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - awdf-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+# ------------------------------------------------------------------------------
+# Isolated Bridge Network for Inter-Container Communication & Service Discovery
+# ------------------------------------------------------------------------------
+networks:
+  awdf-network:
+    driver: bridge
+    name: awdf-bridge-network
+
+# ------------------------------------------------------------------------------
+# Persistent Volume for MongoDB Data (Independent of Container Lifecycle)
+# ------------------------------------------------------------------------------
+volumes:
+  mongo-data:
+    driver: local
+    name: awdf-mongo-storage
